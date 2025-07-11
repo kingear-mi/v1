@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Скачать видео или аудио</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 50px;
+        }
+        input {
+            width: 300px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        #progress-container {
+            width: 300px;
+            height: 20px;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            margin-top: 20px;
+            display: none;
+        }
+        #progress-bar {
+            width: 0%;
+            height: 100%;
+            background-color: #4caf50;
+            transition: width 0.3s ease;
+        }
+        #progress-text {
+            margin-top: 10px;
+            font-size: 16px;
+            display: none;
+        }
+        #image-container {
+            margin-top: 20px;
+            display: none;
+            text-align: center;
+        }
+        #thumbnail-image {
+            max-width: 300px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Вставьте ссылку на видео</h1>
+    <input type="text" id="videoUrl" placeholder="Например: https://www.youtube.com/watch?v=example">
+    <br>
+    <button onclick="download('mp4')">Скачать MP4</button>
+    <button onclick="download('mp3')">Скачать MP3</button>
+    <button onclick="extractImage()">Извлечь картинку</button>
+
+    <div id="progress-container">
+        <div id="progress-bar"></div>
+    </div>
+    <div id="progress-text"></div>
+    <div id="image-container">
+        <h3>Извлеченное изображение:</h3>
+        <img id="thumbnail-image" src="" alt="Thumbnail">
+    </div>
+
+    <script>
+        const apiUrl = 'http://localhost:5000'; // Замените на ваш ngrok URL для внешнего доступа
+
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        async function download(format) {
+            const url = document.getElementById('videoUrl').value.trim();
+            if (!url) {
+                alert('Пожалуйста, введите ссылку!');
+                return;
+            }
+
+            const progressContainer = document.getElementById('progress-container');
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const imageContainer = document.getElementById('image-container');
+
+            progressContainer.style.display = 'none';
+            progressBar.style.width = '0%';
+            progressText.style.display = 'none';
+            progressText.textContent = '';
+            imageContainer.style.display = 'none';
+
+            const downloadId = generateUUID();
+            const eventSource = new EventSource(`${apiUrl}/progress/${downloadId}`);
+
+            eventSource.onmessage = function(event) {
+                const progress = parseInt(event.data);
+                if (progress > 0) {
+                    progressContainer.style.display = 'block';
+                    progressText.style.display = 'block';
+                    progressBar.style.width = `${progress}%`;
+                    progressText.textContent = `${progress}%`;
+                }
+                if (progress >= 100) {
+                    eventSource.close();
+                }
+            };
+
+            try {
+                const response = await fetch(`${apiUrl}/api/download`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url, format: format, download_id: downloadId })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Неизвестная ошибка на сервере');
+                }
+
+                const data = await response.json();
+                const fileResponse = await fetch(`${apiUrl}/api/get_file/${downloadId}`);
+                if (!fileResponse.ok) {
+                    throw new Error('Не удалось получить файл');
+                }
+
+                const blob = await fileResponse.blob();
+                const contentDisposition = fileResponse.headers.get('Content-Disposition');
+                let filename = data.filename || `downloaded_file.${format}`;
+                if (contentDisposition) {
+                    const match = contentDisposition.match(/filename="(.+)"/);
+                    if (match) filename = match[1];
+                }
+
+                const downloadLink = document.createElement('a');
+                downloadLink.href = window.URL.createObjectURL(blob);
+                downloadLink.download = filename;
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+
+                progressContainer.style.display = 'none';
+                progressText.style.display = 'none';
+
+            } catch (error) {
+                alert('Произошла ошибка: ' + error.message);
+                progressContainer.style.display = 'none';
+                progressText.style.display = 'none';
+                eventSource.close();
+            }
+        }
+
+        async function extractImage() {
+            const url = document.getElementById('videoUrl').value.trim();
+            if (!url) {
+                alert('Пожалуйста, введите ссылку!');
+                return;
+            }
+
+            const imageContainer = document.getElementById('image-container');
+            const thumbnailImage = document.getElementById('thumbnail-image');
+            const progressContainer = document.getElementById('progress-container');
+            const progressText = document.getElementById('progress-text');
+
+            imageContainer.style.display = 'none';
+            progressContainer.style.display = 'none';
+            progressText.style.display = 'none';
+
+            try {
+                const response = await fetch(`${apiUrl}/api/extract_image`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error);
+                }
+
+                const data = await response.json();
+                if (data.status === 'success' && data.thumbnail) {
+                    thumbnailImage.src = data.thumbnail;
+                    imageContainer.style.display = 'block';
+                }
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
